@@ -8,3 +8,4 @@ pgvector
 google-generativeai
 groq
 twilio
+python-docx
