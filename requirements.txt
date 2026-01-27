@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+phi-ai
+psycopg2-binary
+pgvector
+google-generativeai
+groq
