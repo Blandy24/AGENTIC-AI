@@ -13,7 +13,6 @@ from phi.vectordb.pgvector import PgVector
 from phi.storage.agent.postgres import PgAgentStorage
 from phi.embedder.google import GeminiEmbedder
 from phi.model.groq import Groq
-from google import genai
 
 # -----------------------------
 # Load environment variables
