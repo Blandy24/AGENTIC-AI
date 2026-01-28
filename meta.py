@@ -1,3 +1,5 @@
+import re
+import asyncio
 import os
 import httpx
 from pathlib import Path
@@ -11,6 +13,7 @@ from phi.vectordb.pgvector import PgVector
 from phi.storage.agent.postgres import PgAgentStorage
 from phi.embedder.google import GeminiEmbedder
 from phi.model.groq import Groq
+from google import genai
 
 # -----------------------------
 # Load environment variables
@@ -48,7 +51,7 @@ knowledge_base = DocxKnowledgeBase(
 )
 
 try:
-    knowledge_base.load(recreate=False)
+    knowledge_base.load(recreate=False)  # Changed to False since already loaded
     print("✅ Knowledge base loaded successfully")
 except Exception as e:
     print(f"⚠️ Error loading knowledge base: {e}")
@@ -129,44 +132,65 @@ async def verify_webhook(
 # -----------------------------
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
-    data = await request.json()
-    
+    user_phone = None  # Initialize early
     try:
+        data = await request.json()
         entry = data.get("entry", [{}])[0]
         changes = entry.get("changes", [{}])[0]
         value = changes.get("value", {})
         messages = value.get("messages", [])
-        
+
         if not messages:
             return JSONResponse(content={"status": "ok"})
-        
+
         message = messages[0]
         user_phone = message.get("from")
+        user_phone_clean = user_phone.replace("whatsapp:", "").replace("+", "")
+
         message_type = message.get("type")
-        
         if message_type != "text":
-            await send_whatsapp_message(user_phone, "Sorry, I can only process text messages right now! 📝")
+            await send_whatsapp_message(
+                user_phone_clean, 
+                "Sorry, I can only process text messages right now! 📝"
+            )
             return JSONResponse(content={"status": "ok"})
-        
+
         user_message = message.get("text", {}).get("body", "")
-        session_id = user_phone
-        
-        print(f"📩 Received: {user_message} from {user_phone}")
-        
-        # ✅ Use knowledge base to respond
-        response = library_agent.run(user_message, session_id=session_id)
+        session_id = user_phone_clean
+
+        print(f"📩 Received: {user_message} from {user_phone_clean}")
+
+        # -----------------------------
+        # Run agent asynchronously
+        # -----------------------------
+        response = await asyncio.to_thread(library_agent.run, user_message, session_id=session_id)
         reply = response.content if response else "Oops! 😅 I couldn't process that."
-        
-        print(f"✅ Reply: {reply}")
-        
-        await send_whatsapp_message(user_phone, reply)
-        
+
+        # -----------------------------
+        # Clean reply for Meta WhatsApp
+        # -----------------------------
+        def clean_reply(text: str) -> str:
+            # Remove *, _, ~, ` (Markdown) to avoid 400 errors
+            text = re.sub(r"[\*\_~`]", "", text)
+            return text
+
+        reply_clean = clean_reply(reply)
+
+        print(f"✅ Reply (cleaned): {reply_clean}")
+
+        # -----------------------------
+        # Send reply via Meta WhatsApp
+        # -----------------------------
+        await send_whatsapp_message(user_phone_clean, reply_clean)
+
     except Exception as e:
         print(f"⚠️ Error: {e}")
-        if 'user_phone' in locals():
-            await send_whatsapp_message(user_phone, "Something went wrong 🙈 Please try again!")
-    
+        if user_phone:
+            user_phone_clean = user_phone.replace("whatsapp:", "").replace("+", "")
+            await send_whatsapp_message(user_phone_clean, "Something went wrong 🙈 Please try again!")
+
     return JSONResponse(content={"status": "ok"})
+
 
 @app.get("/")
 async def root():
@@ -175,3 +199,9 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "agent": "LibBot"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("meta:app", host="127.0.0.1", port=8000, reload=True)
+
